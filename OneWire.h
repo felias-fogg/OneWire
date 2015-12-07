@@ -4,12 +4,12 @@
 #include <inttypes.h>
 #include <util/delay.h>
 
-#if ARDUINO >= 100
-#include "Arduino.h"       // for delayMicroseconds, digitalPinToBitMask, etc
-#else
-#include "WProgram.h"      // for delayMicroseconds
-#include "pins_arduino.h"  // for digitalPinToBitMask, etc
+
+#if ARDUINO < 10606
+#error "This library is not compatible with Arduino version 1.6.5 or older"
 #endif
+
+#include "Arduino.h"       // for delayMicroseconds, digitalPinToBitMask, etc
 
 // You can exclude certain features from OneWire.  In theory, this
 // might save some space.  In practice, the compiler automatically
@@ -21,7 +21,7 @@
 // is the exception, because it selects a fast but large algorithm
 // or a small but slow algorithm.
 
-// you can set OWNWIRE_SLOW to 0 in order to use the original
+// you can set ONEWIRE_SLOW to 0 in order to use the original
 // delayMicroseconds calls
 #if F_CPU == 1000000L 
 #if !defined(ONEWIRE_SLOW)
@@ -29,9 +29,6 @@
 #endif
 #else
 #define ONEWIRE_SLOW 0
-#endif
-#if ONEWIRE_SLOW
-#define ONEWIRE_CORRECTION 8 // should be changed when delayMicroseconds is fixed
 #endif
 
 // you can exclude onewire_search by defining that to 0

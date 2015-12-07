@@ -4,7 +4,11 @@ Copyright (c) 2007, Jim Studt  (original old version - many contributors since)
 The latest version of this library may be found at:
   http://www.pjrc.com/teensy/td_libs_OneWire.html
 
-Version 2.2: delayMicroseconds replaced by explicit nops or correction
+Version 2.3: Since delayMicroseconds has been fixed (1.6.6), the correction factor
+  is not needed any longer. However, for very short delay intervals < 16us, we still
+  use explicit nop calls.
+
+Version 2.2: delayMicroseconds replaced by explicit noops or correction
   factor in delayMicroseconds in order to be able to run the code at 1
   MHz. Define ONEWIRE_SLOW to be 0, when the original code should be
   used.
@@ -145,25 +149,13 @@ uint8_t OneWire::reset(void)
 	DIRECT_WRITE_LOW(reg, mask);
 	DIRECT_MODE_OUTPUT(reg, mask);	// drive output low
 	interrupts();
-#if ONEWIRE_SLOW
-	delayMicroseconds(500/ONEWIRE_CORRECTION);
-#else
 	delayMicroseconds(500);
-#endif
 	noInterrupts();
 	DIRECT_MODE_INPUT(reg, mask);	// allow it to float
-#if ONEWIRE_SLOW
-	delayMicroseconds(80/ONEWIRE_CORRECTION);
-#else
 	delayMicroseconds(80);
-#endif
 	r = !DIRECT_READ(reg, mask);
 	interrupts();
-#if ONEWIRE_SLOW
-	delayMicroseconds(420/ONEWIRE_CORRECTION);
-#else
 	delayMicroseconds(420);
-#endif
 	return r;
 }
 
@@ -187,20 +179,12 @@ void OneWire::write_bit(uint8_t v)
 #endif
 		DIRECT_WRITE_HIGH(reg, mask);	// drive output high
 		interrupts();
-#if ONEWIRE_SLOW
-		delayMicroseconds(55/ONEWIRE_CORRECTION);
-#else
 		delayMicroseconds(55);
-#endif
 	} else {
 		noInterrupts();
 		DIRECT_WRITE_LOW(reg, mask);
 		DIRECT_MODE_OUTPUT(reg, mask);	// drive output low
-#if ONEWIRE_SLOW
-		delayMicroseconds(65/ONEWIRE_CORRECTION);
-#else
 		delayMicroseconds(65);
-#endif
 		DIRECT_WRITE_HIGH(reg, mask);	// drive output high
 		interrupts();
 #if ONEWIRE_SLOW
@@ -239,11 +223,7 @@ uint8_t OneWire::read_bit(void)
 #endif
 	r = DIRECT_READ(reg, mask);
 	interrupts();
-#if ONEWIRE_SLOW
-	delayMicroseconds(53/ONEWIRE_CORRECTION);
-#else
 	delayMicroseconds(53);
-#endif
 	return r;
 }
 
