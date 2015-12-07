@@ -2,14 +2,32 @@
 #define OneWire_h
 
 #include <inttypes.h>
-#include <util/delay.h>
 
-
-#if ARDUINO < 10606
-#error "This library is not compatible with Arduino version 1.6.5 or older"
+#if ARDUINO >= 100
+#include "Arduino.h"       // for delayMicroseconds, digitalPinToBitMask, etc
+#else
+#include "WProgram.h"      // for delayMicroseconds
+#include "pins_arduino.h"  // for digitalPinToBitMask, etc
 #endif
 
-#include "Arduino.h"       // for delayMicroseconds, digitalPinToBitMask, etc
+// In case the CPU freq is 1 MHz, we take some special measures
+// to get the correct delays. If yo set ONEWIRE_SLOW to 0,
+// this will not happen!
+#if F_CPU == 1000000L
+#ifndef ONEWIRE_SLOW
+#define ONEWIRE_SLOW 1
+#if ARDUINO < 10605
+#define ONEWIRE_CORRECTION 8
+#endif
+#endif
+#endif
+
+#ifndef ONEWIRE_SLOW
+#define ONEWIRE_SLOW 0
+#endif
+#ifndef ONEWIRE_CORRECTION
+#define ONEWIRE_CORRECTION 1
+#endif
 
 // You can exclude certain features from OneWire.  In theory, this
 // might save some space.  In practice, the compiler automatically
@@ -20,16 +38,6 @@
 // and redesign your program to not need them!  ONEWIRE_CRC8_TABLE
 // is the exception, because it selects a fast but large algorithm
 // or a small but slow algorithm.
-
-// you can set ONEWIRE_SLOW to 0 in order to use the original
-// delayMicroseconds calls
-#if F_CPU == 1000000L 
-#if !defined(ONEWIRE_SLOW)
-#define ONEWIRE_SLOW 1
-#endif
-#else
-#define ONEWIRE_SLOW 0
-#endif
 
 // you can exclude onewire_search by defining that to 0
 #ifndef ONEWIRE_SEARCH
@@ -67,13 +75,55 @@
 #define IO_REG_TYPE uint8_t
 #define IO_REG_ASM asm("r30")
 #define DIRECT_READ(base, mask)         (((*(base)) & (mask)) ? 1 : 0)
-#define DIRECT_MODE_INPUT(base, mask)   ((*(base+1)) &= ~(mask))
-#define DIRECT_MODE_OUTPUT(base, mask)  ((*(base+1)) |= (mask))
-#define DIRECT_WRITE_LOW(base, mask)    ((*(base+2)) &= ~(mask))
-#define DIRECT_WRITE_HIGH(base, mask)   ((*(base+2)) |= (mask))
+#define DIRECT_MODE_INPUT(base, mask)   ((*((base)+1)) &= ~(mask))
+#define DIRECT_MODE_OUTPUT(base, mask)  ((*((base)+1)) |= (mask))
+#define DIRECT_WRITE_LOW(base, mask)    ((*((base)+2)) &= ~(mask))
+#define DIRECT_WRITE_HIGH(base, mask)   ((*((base)+2)) |= (mask))
+
+#elif defined(__MK20DX128__) || defined(__MK20DX256__)
+#define PIN_TO_BASEREG(pin)             (portOutputRegister(pin))
+#define PIN_TO_BITMASK(pin)             (1)
+#define IO_REG_TYPE uint8_t
+#define IO_REG_ASM
+#define DIRECT_READ(base, mask)         (*((base)+512))
+#define DIRECT_MODE_INPUT(base, mask)   (*((base)+640) = 0)
+#define DIRECT_MODE_OUTPUT(base, mask)  (*((base)+640) = 1)
+#define DIRECT_WRITE_LOW(base, mask)    (*((base)+256) = 1)
+#define DIRECT_WRITE_HIGH(base, mask)   (*((base)+128) = 1)
+
+#elif defined(__MKL26Z64__)
+#define PIN_TO_BASEREG(pin)             (portOutputRegister(pin))
+#define PIN_TO_BITMASK(pin)             (digitalPinToBitMask(pin))
+#define IO_REG_TYPE uint8_t
+#define IO_REG_ASM
+#define DIRECT_READ(base, mask)         ((*((base)+16) & (mask)) ? 1 : 0)
+#define DIRECT_MODE_INPUT(base, mask)   (*((base)+20) &= ~(mask))
+#define DIRECT_MODE_OUTPUT(base, mask)  (*((base)+20) |= (mask))
+#define DIRECT_WRITE_LOW(base, mask)    (*((base)+8) = (mask))
+#define DIRECT_WRITE_HIGH(base, mask)   (*((base)+4) = (mask))
+
+#elif defined(__SAM3X8E__)
+// Arduino 1.5.1 may have a bug in delayMicroseconds() on Arduino Due.
+// http://arduino.cc/forum/index.php/topic,141030.msg1076268.html#msg1076268
+// If you have trouble with OneWire on Arduino Due, please check the
+// status of delayMicroseconds() before reporting a bug in OneWire!
+#define PIN_TO_BASEREG(pin)             (&(digitalPinToPort(pin)->PIO_PER))
+#define PIN_TO_BITMASK(pin)             (digitalPinToBitMask(pin))
+#define IO_REG_TYPE uint32_t
+#define IO_REG_ASM
+#define DIRECT_READ(base, mask)         (((*((base)+15)) & (mask)) ? 1 : 0)
+#define DIRECT_MODE_INPUT(base, mask)   ((*((base)+5)) = (mask))
+#define DIRECT_MODE_OUTPUT(base, mask)  ((*((base)+4)) = (mask))
+#define DIRECT_WRITE_LOW(base, mask)    ((*((base)+13)) = (mask))
+#define DIRECT_WRITE_HIGH(base, mask)   ((*((base)+12)) = (mask))
+#ifndef PROGMEM
+#define PROGMEM
+#endif
+#ifndef pgm_read_byte
+#define pgm_read_byte(addr) (*(const uint8_t *)(addr))
+#endif
 
 #elif defined(__PIC32MX__)
-#include <plib.h>  // is this necessary?
 #define PIN_TO_BASEREG(pin)             (portModeRegister(digitalPinToPort(pin)))
 #define PIN_TO_BITMASK(pin)             (digitalPinToBitMask(pin))
 #define IO_REG_TYPE uint32_t
@@ -84,8 +134,40 @@
 #define DIRECT_WRITE_LOW(base, mask)    ((*(base+8+1)) = (mask))          //LATXCLR  + 0x24
 #define DIRECT_WRITE_HIGH(base, mask)   ((*(base+8+2)) = (mask))          //LATXSET + 0x28
 
+#elif defined(ARDUINO_ARCH_ESP8266)
+#define PIN_TO_BASEREG(pin)             ((volatile uint32_t*) GPO)
+#define PIN_TO_BITMASK(pin)             (1 << pin)
+#define IO_REG_TYPE uint32_t
+#define IO_REG_ASM
+#define DIRECT_READ(base, mask)         ((GPI & (mask)) ? 1 : 0)    //GPIO_IN_ADDRESS
+#define DIRECT_MODE_INPUT(base, mask)   (GPE &= ~(mask))            //GPIO_ENABLE_W1TC_ADDRESS
+#define DIRECT_MODE_OUTPUT(base, mask)  (GPE |= (mask))             //GPIO_ENABLE_W1TS_ADDRESS
+#define DIRECT_WRITE_LOW(base, mask)    (GPOC = (mask))             //GPIO_OUT_W1TC_ADDRESS
+#define DIRECT_WRITE_HIGH(base, mask)   (GPOS = (mask))             //GPIO_OUT_W1TS_ADDRESS
+
+#elif defined(RBL_NRF51822)
+#define PIN_TO_BASEREG(pin)             (0)
+#define PIN_TO_BITMASK(pin)             (pin)
+#define IO_REG_TYPE uint32_t
+#define IO_REG_ASM
+#define DIRECT_READ(base, pin)          nrf_gpio_pin_read(pin)
+#define DIRECT_WRITE_LOW(base, pin)     nrf_gpio_pin_clear(pin)
+#define DIRECT_WRITE_HIGH(base, pin)    nrf_gpio_pin_set(pin)
+#define DIRECT_MODE_INPUT(base, pin)    nrf_gpio_cfg_input(pin, NRF_GPIO_PIN_NOPULL)
+#define DIRECT_MODE_OUTPUT(base, pin)   nrf_gpio_cfg_output(pin)
+
 #else
-#error "Please define I/O register types here"
+#define PIN_TO_BASEREG(pin)             (0)
+#define PIN_TO_BITMASK(pin)             (pin)
+#define IO_REG_TYPE unsigned int
+#define IO_REG_ASM
+#define DIRECT_READ(base, pin)          digitalRead(pin)
+#define DIRECT_WRITE_LOW(base, pin)     digitalWrite(pin, LOW)
+#define DIRECT_WRITE_HIGH(base, pin)    digitalWrite(pin, HIGH)
+#define DIRECT_MODE_INPUT(base, pin)    pinMode(pin,INPUT)
+#define DIRECT_MODE_OUTPUT(base, pin)   pinMode(pin,OUTPUT)
+#warning "OneWire. Fallback mode. Using API calls for pinMode,digitalRead and digitalWrite. Operation of this library is not guaranteed on this architecture."
+
 #endif
 
 
@@ -112,7 +194,7 @@ class OneWire
     uint8_t reset(void);
 
     // Issue a 1-Wire rom select command, you do the reset first.
-    void select( uint8_t rom[8]);
+    void select(const uint8_t rom[8]);
 
     // Issue a 1-Wire rom skip command, to address all on bus.
     void skip(void);
@@ -148,19 +230,23 @@ class OneWire
     // Clear the search state so that if will start from the beginning again.
     void reset_search();
 
+    // Setup the search to find the device type 'family_code' on the next call
+    // to search(*newAddr) if it is present.
+    void target_search(uint8_t family_code);
+
     // Look for the next device. Returns 1 if a new address has been
     // returned. A zero might mean that the bus is shorted, there are
     // no devices, or you have already retrieved all of them.  It
     // might be a good idea to check the CRC to make sure you didn't
     // get garbage.  The order is deterministic. You will always get
     // the same devices in the same order.
-    uint8_t search(uint8_t *newAddr);
+    uint8_t search(uint8_t *newAddr, bool search_mode = true);
 #endif
 
 #if ONEWIRE_CRC
     // Compute a Dallas Semiconductor 8 bit CRC, these are used in the
     // ROM and scratchpad registers.
-    static uint8_t crc8( uint8_t *addr, uint8_t len);
+    static uint8_t crc8(const uint8_t *addr, uint8_t len);
 
 #if ONEWIRE_CRC16
     // Compute the 1-Wire CRC16 and compare it against the received CRC.
@@ -181,8 +267,9 @@ class OneWire
     // @param inverted_crc - The two CRC16 bytes in the received data.
     //                       This should just point into the received data,
     //                       *not* at a 16-bit integer.
+    // @param crc - The crc starting value (optional)
     // @return True, iff the CRC matches.
-    static bool check_crc16(uint8_t* input, uint16_t len, uint8_t* inverted_crc);
+    static bool check_crc16(const uint8_t* input, uint16_t len, const uint8_t* inverted_crc, uint16_t crc = 0);
 
     // Compute a Dallas Semiconductor 16 bit CRC.  This is required to check
     // the integrity of data received from many 1-Wire devices.  Note that the
@@ -194,8 +281,9 @@ class OneWire
     //      byte order than the two bytes you get from 1-Wire.
     // @param input - Array of bytes to checksum.
     // @param len - How many bytes to use.
+    // @param crc - The crc starting value (optional)
     // @return The CRC16, as defined by Dallas Semiconductor.
-    static uint16_t crc16(uint8_t* input, uint16_t len);
+    static uint16_t crc16(const uint8_t* input, uint16_t len, uint16_t crc = 0);
 #endif
 #endif
 };

@@ -4,14 +4,33 @@ Copyright (c) 2007, Jim Studt  (original old version - many contributors since)
 The latest version of this library may be found at:
   http://www.pjrc.com/teensy/td_libs_OneWire.html
 
-Version 2.3: Since delayMicroseconds has been fixed (1.6.6), the correction factor
-  is not needed any longer. However, for very short delay intervals < 16us, we still
-  use explicit nop calls.
+OneWire has been maintained by Paul Stoffregen (paul@pjrc.com) since
+January 2010.  At the time, it was in need of many bug fixes, but had
+been abandoned the original author (Jim Studt).  None of the known
+contributors were interested in maintaining OneWire.  Paul typically
+works on OneWire every 6 to 12 months.  Patches usually wait that
+long.  If anyone is interested in more actively maintaining OneWire,
+please contact Paul.
 
-Version 2.2: delayMicroseconds replaced by explicit noops or correction
-  factor in delayMicroseconds in order to be able to run the code at 1
-  MHz. Define ONEWIRE_SLOW to be 0, when the original code should be
-  used.
+Version 2.4: Since delayMicroseconds has been fixed (1.6.5), the correction factor
+  is not needed any longer. It is set to 1 for Arduino >= 1.6.5.
+  However, for very short delay intervals < 16us, we still
+  use explicit nop calls. I also took now the 'offical' V2.3 as the base for my branch.
+
+Version 2.3:
+  Unknonw chip fallback mode, Roger Clark
+  Teensy-LC compatibility, Paul Stoffregen
+  Search bug fix, Love Nystrom
+
+Version 2.2:
+  Teensy 3.0 compatibility, Paul Stoffregen, paul@pjrc.com
+  Arduino Due compatibility, http://arduino.cc/forum/index.php?topic=141030
+  Fix DS18B20 example negative temperature
+  Fix DS18B20 example's low res modes, Ken Butcher
+  Improve reset timing, Mark Tillotson
+  Add const qualifiers, Bertrik Sikken
+  Add initial value input to crc16, Bertrik Sikken
+  Add target_search() function, Scott Roberts
 
 Version 2.1:
   Arduino 1.0 compatibility, Paul Stoffregen
@@ -149,13 +168,13 @@ uint8_t OneWire::reset(void)
 	DIRECT_WRITE_LOW(reg, mask);
 	DIRECT_MODE_OUTPUT(reg, mask);	// drive output low
 	interrupts();
-	delayMicroseconds(500);
+	delayMicroseconds(480/ONEWIRE_CORRECTION);
 	noInterrupts();
 	DIRECT_MODE_INPUT(reg, mask);	// allow it to float
-	delayMicroseconds(80);
+	delayMicroseconds(70/ONEWIRE_CORRECTION);
 	r = !DIRECT_READ(reg, mask);
 	interrupts();
-	delayMicroseconds(420);
+	delayMicroseconds(410/ONEWIRE_CORRECTION);
 	return r;
 }
 
@@ -179,12 +198,12 @@ void OneWire::write_bit(uint8_t v)
 #endif
 		DIRECT_WRITE_HIGH(reg, mask);	// drive output high
 		interrupts();
-		delayMicroseconds(55);
+		delayMicroseconds(55/ONEWIRE_CORRECTION);
 	} else {
 		noInterrupts();
 		DIRECT_WRITE_LOW(reg, mask);
 		DIRECT_MODE_OUTPUT(reg, mask);	// drive output low
-		delayMicroseconds(65);
+		delayMicroseconds(65/ONEWIRE_CORRECTION);
 		DIRECT_WRITE_HIGH(reg, mask);	// drive output high
 		interrupts();
 #if ONEWIRE_SLOW
@@ -214,16 +233,14 @@ uint8_t OneWire::read_bit(void)
 	delayMicroseconds(3);
 #endif
 	DIRECT_MODE_INPUT(reg, mask);	// let pin float, pull up will raise
-
 #if ONEWIRE_SLOW
 		asm("nop" "\n\t" "nop" "\n\t" "nop" "\n\t" "nop" "\n\t" "nop" "\n\t" "nop" "\n\t" "nop" "\n\t" "nop");
-
 #else
 	delayMicroseconds(10);
 #endif
 	r = DIRECT_READ(reg, mask);
 	interrupts();
-	delayMicroseconds(53);
+	delayMicroseconds(53/ONEWIRE_CORRECTION);
 	return r;
 }
 
@@ -280,13 +297,13 @@ void OneWire::read_bytes(uint8_t *buf, uint16_t count) {
 //
 // Do a ROM select
 //
-void OneWire::select( uint8_t rom[8])
+void OneWire::select(const uint8_t rom[8])
 {
-    int i;
+    uint8_t i;
 
     write(0x55);           // Choose ROM
 
-    for( i = 0; i < 8; i++) write(rom[i]);
+    for (i = 0; i < 8; i++) write(rom[i]);
 }
 
 //
@@ -311,17 +328,30 @@ void OneWire::depower()
 // You do not need to do it for the first search, though you could.
 //
 void OneWire::reset_search()
-  {
+{
   // reset the search state
   LastDiscrepancy = 0;
   LastDeviceFlag = FALSE;
   LastFamilyDiscrepancy = 0;
-  for(int i = 7; ; i--)
-    {
+  for(int i = 7; ; i--) {
     ROM_NO[i] = 0;
     if ( i == 0) break;
-    }
   }
+}
+
+// Setup the search to find the device type 'family_code' on the next call
+// to search(*newAddr) if it is present.
+//
+void OneWire::target_search(uint8_t family_code)
+{
+   // set the search state to find SearchFamily type devices
+   ROM_NO[0] = family_code;
+   for (uint8_t i = 1; i < 8; i++)
+      ROM_NO[i] = 0;
+   LastDiscrepancy = 64;
+   LastFamilyDiscrepancy = 0;
+   LastDeviceFlag = FALSE;
+}
 
 //
 // Perform a search. If this function returns a '1' then it has
@@ -339,7 +369,7 @@ void OneWire::reset_search()
 // Return TRUE  : device found, ROM number in ROM_NO buffer
 //        FALSE : device not found, end of search
 //
-uint8_t OneWire::search(uint8_t *newAddr)
+uint8_t OneWire::search(uint8_t *newAddr, bool search_mode /* = true */)
 {
    uint8_t id_bit_number;
    uint8_t last_zero, rom_byte_number, search_result;
@@ -368,7 +398,11 @@ uint8_t OneWire::search(uint8_t *newAddr)
       }
 
       // issue the search command
-      write(0xF0);
+      if (search_mode == true) {
+        write(0xF0);   // NORMAL SEARCH
+      } else {
+        write(0xEC);   // CONDITIONAL SEARCH
+      }
 
       // loop to do the search
       do
@@ -452,8 +486,9 @@ uint8_t OneWire::search(uint8_t *newAddr)
       LastDeviceFlag = FALSE;
       LastFamilyDiscrepancy = 0;
       search_result = FALSE;
+   } else {
+      for (int i = 0; i < 8; i++) newAddr[i] = ROM_NO[i];
    }
-   for (int i = 0; i < 8; i++) newAddr[i] = ROM_NO[i];
    return search_result;
   }
 
@@ -492,7 +527,7 @@ static const uint8_t PROGMEM dscrc_table[] = {
 // compared to all those delayMicrosecond() calls.  But I got
 // confused, so I use this table from the examples.)
 //
-uint8_t OneWire::crc8( uint8_t *addr, uint8_t len)
+uint8_t OneWire::crc8(const uint8_t *addr, uint8_t len)
 {
 	uint8_t crc = 0;
 
@@ -506,7 +541,7 @@ uint8_t OneWire::crc8( uint8_t *addr, uint8_t len)
 // Compute a Dallas Semiconductor 8 bit CRC directly.
 // this is much slower, but much smaller, than the lookup table.
 //
-uint8_t OneWire::crc8( uint8_t *addr, uint8_t len)
+uint8_t OneWire::crc8(const uint8_t *addr, uint8_t len)
 {
 	uint8_t crc = 0;
 	
@@ -524,23 +559,22 @@ uint8_t OneWire::crc8( uint8_t *addr, uint8_t len)
 #endif
 
 #if ONEWIRE_CRC16
-bool OneWire::check_crc16(uint8_t* input, uint16_t len, uint8_t* inverted_crc)
+bool OneWire::check_crc16(const uint8_t* input, uint16_t len, const uint8_t* inverted_crc, uint16_t crc)
 {
-    uint16_t crc = ~crc16(input, len);
+    crc = ~crc16(input, len, crc);
     return (crc & 0xFF) == inverted_crc[0] && (crc >> 8) == inverted_crc[1];
 }
 
-uint16_t OneWire::crc16(uint8_t* input, uint16_t len)
+uint16_t OneWire::crc16(const uint8_t* input, uint16_t len, uint16_t crc)
 {
     static const uint8_t oddparity[16] =
         { 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0 };
-    uint16_t crc = 0;    // Starting seed is zero.
 
     for (uint16_t i = 0 ; i < len ; i++) {
       // Even though we're just copying a byte from the input,
       // we'll be doing 16-bit computation with it.
       uint16_t cdata = input[i];
-      cdata = (cdata ^ (crc & 0xff)) & 0xff;
+      cdata = (cdata ^ crc) & 0xff;
       crc >>= 8;
 
       if (oddparity[cdata & 0x0F] ^ oddparity[cdata >> 4])
