@@ -1,16 +1,43 @@
-#include <OneWire.h>
-
+// -*-c++-*-
 // OneWire DS18S20, DS18B20, DS1822 Temperature Example
 //
 // http://www.pjrc.com/teensy/td_libs_OneWire.html
 //
 // The DallasTemperature library can do all this work for you!
 // http://milesburton.com/Dallas_Temperature_Control_Library
+//
+// works also on an ATtiny using the SoftwareSerial library.
+//
+// If you just want to see that the devices are recognized,
+// simply connect a LED:
+// Blinks once, when there are no more devices, 
+// twice for each DS18S20
+// three times for each DS18B20
+// four times for each DS1822
+// five times for any other device
 
-OneWire  ds(3); 
+#include <OneWire.h>
 
-void setup(void) {
-  Serial.begin(19200);
+#define DS1820DATA 2
+#define DS1820VCC 3
+#define LED 4
+#define SERIALRX 7 // only needed on ATtiny
+#define SERIALTX 6 // only needed on ATtiny
+#define SPEED 9600 // since we want it also running with 1MHz
+
+#if __AVR_ARCH__==2 ||  __AVR_ARCH__==25
+#include <SoftwareSerial.h>
+SoftwareSerial Serial(SERIALRX, SERIALTX);
+#endif
+OneWire ds(DS1820DATA);
+
+// the setup function runs once when you press reset or power the board
+void setup() {
+  // initialize digital pin 13 as an output.
+  pinMode(LED, OUTPUT);
+  pinMode(DS1820VCC, OUTPUT);
+  digitalWrite(DS1820VCC, HIGH);
+  Serial.begin(SPEED);
 }
 
 void loop(void) {
@@ -20,12 +47,13 @@ void loop(void) {
   byte data[12];
   byte addr[8];
   float celsius, fahrenheit;
-  
+
   if ( !ds.search(addr)) {
     Serial.println("No more addresses.");
     Serial.println();
     ds.reset_search();
-    delay(250);
+    blink(1);
+    delay(1000);
     return;
   }
   
@@ -46,17 +74,21 @@ void loop(void) {
     case 0x10:
       Serial.println("  Chip = DS18S20");  // or old DS1820
       type_s = 1;
+      blink(2);
       break;
     case 0x28:
       Serial.println("  Chip = DS18B20");
       type_s = 0;
+      blink(3);
       break;
     case 0x22:
       Serial.println("  Chip = DS1822");
       type_s = 0;
+      blink(4);
       break;
     default:
       Serial.println("Device is not a DS18x20 family device.");
+      blink(5);
       return;
   } 
 
@@ -106,4 +138,14 @@ void loop(void) {
   Serial.print(" Celsius, ");
   Serial.print(fahrenheit);
   Serial.println(" Fahrenheit");
+}
+
+void blink(int num) {
+  for (int i=0; i < num; i++) {
+    digitalWrite(LED, HIGH);
+    delay(250);
+    digitalWrite(LED, LOW);
+    delay(250);
+  }
+  delay(250);
 }
