@@ -9,3 +9,4 @@ Arduino versions. For this reason, it also uses a "correction" factor
 of 8 because it assumes 8MHz as the lowest frequency. Since 1.6.5 the
 later patch is not neccessary anymore and is disabled.
 
+Since the [OneWire library maintained by Paul Stoffregen](https://github.com/PaulStoffregen/OneWire) apparently addresses all the problems, I have archived this repository!
